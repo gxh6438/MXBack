@@ -1,0 +1,51 @@
+name: Build & Release
+
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Build wheel
+        run: pipx run build --wheel --outdir dist
+
+      # Endstone 插件目录格式：包内容平铺的 zip
+      - name: Build plugin zip
+        run: |
+          cd src
+          python3 - <<'EOF'
+          import zipfile
+          from pathlib import Path
+          tag = "${{ github.ref_name }}"
+          out = Path(f"../dist/endstone_mxback-{tag.lstrip('v')}.zip")
+          out.parent.mkdir(exist_ok=True)
+          with zipfile.ZipFile(out, "w", zipfile.ZIP_DEFLATED, compresslevel=9) as zf:
+              for p in sorted(Path("endstone_mxback").rglob("*")):
+                  if p.is_file() and "__pycache__" not in p.parts:
+                      zf.write(p, p.as_posix())
+          EOF
+
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: endstone-mxback
+          path: dist/*
+
+      - name: Create release
+        if: startsWith(github.ref, 'refs/tags/')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: dist/*
+          generate_release_notes: true
