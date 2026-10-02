@@ -7,6 +7,7 @@ name = "endstone-mxback"
 version = "0.0.1"
 description = "MxBack - Endstone 方块日志记录与区域回档插件"
 requires-python = ">=3.10"
+license = "MIT"
 
 [project.entry-points."endstone"]
 mxback = "endstone_mxback:MxBackPlugin"

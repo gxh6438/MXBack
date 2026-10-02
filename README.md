@@ -276,4 +276,4 @@ python -m build --wheel
 
 ## 许可
 
-本项目仅供学习交流使用。
+本项目基于 [MIT License](LICENSE) 开源。
