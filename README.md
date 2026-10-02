@@ -28,10 +28,7 @@ Minecraft 基岩版（BDS）Endstone 方块日志记录与区域回档插件。
 
 ## 安装
 
-从 [Releases](https://github.com/gxh6438/MXBack/releases) 下载最新版：
-
-- **`.whl`**：放入 `plugins/` 目录（或 `pip install` 后使用）
-- **`.zip`**：Endstone 插件目录格式，直接解压到 `plugins/`
+从 [Releases](https://github.com/gxh6438/MXBack/releases) 下载最新版 `.whl`，放入 `plugins/` 目录（或 `pip install` 后使用）。
 
 启动服务器后自动生成 `plugins/mxback/config.json`（默认配置）与数据目录。
 
@@ -275,7 +272,7 @@ pip install build
 python -m build --wheel
 ```
 
-产物在 `dist/`。推送 `v*` 标签会自动触发 GitHub Actions 构建并发布 Release（.whl + 插件格式 .zip）。
+产物在 `dist/`。推送 `v*` 标签会自动触发 GitHub Actions 构建并发布 Release（.whl）。
 
 ## 许可
 

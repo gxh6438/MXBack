@@ -8,7 +8,6 @@ version = "0.0.1"
 description = "MxBack - Endstone 方块日志记录与区域回档插件"
 requires-python = ">=3.10"
 
-# Endstone 插件入口点：名字必须为项目名去掉 endstone- 前缀
 [project.entry-points."endstone"]
 mxback = "endstone_mxback:MxBackPlugin"
 
