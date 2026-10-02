@@ -14,7 +14,8 @@ Minecraft 基岩版（BDS）Endstone 方块日志记录与区域回档插件。
 - **特殊场景处理**：骨粉催熟（树消失/作物退回）、桶倒水、海绵吸水、含水方块（waterlogged）清水、掉落物清理
 - **未加载区块自动传送**：回档遇到未加载区块时把发起者传送到目标区块触发加载，加载后继续
 - **可视化选区**：粒子边框实时渲染（仅本人可见），双工具选点
-- **游戏内表单 UI**：主菜单、回档、回档记录、日志中心（文件浏览 + 数据库查询）、配置编辑（保存即热生效）、数据库管理
+- **细粒度玩家权限**：9 项权限（选区/回档/选区查询/撤销/撤销他人/记录/文件日志/数据库查询/状态）逐项控制，支持全局默认 + 单玩家单独设置（以单独为准），游戏内表单管理
+- **游戏内表单 UI**：主菜单、回档、回档记录、日志中心（文件浏览 + 数据库查询）、权限管理、配置编辑（保存即热生效）、数据库管理
 - **每日分类日志文件**：按日期 / 玩家 / 分类分层的人类可读中文日志，自动压缩归档
 - **数据库轮换**：当前库一键转归档、从空库开始，归档可随时恢复
 - **性能保护**：内存缓冲 + 后台线程落盘、流式分批回档、区块安全检查，避免 TPS 波动与崩溃
@@ -51,6 +52,7 @@ Minecraft 基岩版（BDS）Endstone 方块日志记录与区域回档插件。
 | `/mxback history` | 查看回档记录并撤销任意一次 |
 | `/mxback log` / `lookup` | 日志中心（日志文件浏览 + 数据库查询） |
 | `/mxback config` / `settings` | 配置表单（所有配置项，保存即热生效） |
+| `/mxback perm` | 权限管理（全局默认 + 单玩家设置，仅 OP） |
 | `/mxback status` | 运行状态统计 |
 | `/mxback compress [策略]` | 立即压缩旧日志（gzip / bz2 / xz / auto） |
 | `/mxback purge <天数>` | 清理数据库中 N 天前的记录 |
@@ -58,7 +60,7 @@ Minecraft 基岩版（BDS）Endstone 方块日志记录与区域回档插件。
 | `/mxback reload` | 从磁盘重载配置文件 |
 | `/mxback help` | 命令帮助 |
 
-基础命令需要 `mxback.use` 权限（默认所有人）。管理类子命令（config / compress / purge / db / reload）仅 OP 与控制台可用。
+基础命令需要 `mxback.use` 权限（默认所有人）。管理类子命令（perm / config / compress / purge / db / reload）仅 OP 与控制台可用；功能类子命令按细粒度玩家权限门控（见下节）。
 
 ## 选区工具
 
@@ -74,16 +76,63 @@ Minecraft 基岩版（BDS）Endstone 方块日志记录与区域回档插件。
 
 选区完成时弹出操作表单，并以粒子渲染选区边框（仅本人可见）。体积上限、Y 范围、工具物品均可在配置中修改。
 
-## 权限
+## 玩家权限管理
+
+细粒度权限系统，普通玩家（非 OP）的功能全部按权限项逐一控制。判定规则：
+
+```
+玩家单独设置 > 全局默认；未单独设置的项跟随全局默认；OP / 控制台恒为允许
+```
+
+### 权限项（9 项）
+
+| 权限 | 控制 |
+|---|---|
+| `selection` 选区模式 | 选区工具选点、粒子边框（`/mxback start`、`/mxback stop`） |
+| `rollback` 选区回档 | 对已选区域执行回档 |
+| `selection_lookup` 选区日志查询 | 查看选区内的方块变更记录 |
+| `undo` 撤销自己的回档 | `/mxback undo` 与回档记录中撤销自己的会话 |
+| `undo_others` 撤销他人的回档 | 查看全部回档记录并撤销任何人的会话（协管授权） |
+| `history` 查看回档记录 | `/mxback history` 回档历史列表 |
+| `lookup_files` 日志文件浏览 | 按日期/玩家/分类浏览每日日志文件 |
+| `lookup_db` 数据库查询 | 按分类/玩家/时间窗查询数据库记录 |
+| `status` 运行状态 | `/mxback status` 运行统计 |
+
+### 设置方式
+
+**全局默认**（统一配置所有普通玩家）：`config.json` → `player_permissions`，或游戏内 `/mxback perm` → 全局默认权限，也可在 `/mxback config` 表单修改，保存即热生效。
+
+**单玩家单独设置**（以单独为准）：`permissions.json` → `players`，或游戏内 `/mxback perm` → 选择玩家（在线列表 / 按名字添加，支持离线玩家）→ 逐项开关。提交时仅记录与当前生效值不同的项为单独设置；「清除全部单独设置」让该玩家恢复跟随全局。
+
+```json
+// plugins/mxback/permissions.json
+{
+  "players": {
+    "Steve": { "rollback": true, "undo": true, "lookup_db": true }
+  }
+}
+```
+
+上例：Steve 的回档/撤销/数据库查询按单独设置放行，其余 6 项跟随全局默认。
+
+### 权限与界面联动
+
+菜单按钮按实际权限动态显示：仅有日志查询权限的玩家不会看到回档入口，仅有回档权限的玩家在日志中心只会看到被授权的入口（文件浏览 / 数据库查询分开控制）。授权中途撤销立即生效，选区工具也会即时失效。
 
 | 功能 | OP / 控制台 | 普通玩家 |
 |---|---|---|
-| 选区与回档 | ✔ | 需 `player_access.allow_rollback` |
-| 撤销回档 | ✔（可撤销任何人） | 需 `player_access.allow_undo`（仅自己的） |
-| 日志查询 | ✔ | 需 `player_access.allow_lookup` |
-| 配置 / 压缩 / 清库 / 数据库管理 / 重载 | ✔ | ✘ |
+| 选区与选点 | ✔ | `selection` |
+| 选区回档 | ✔ | `rollback` |
+| 选区日志查询 | ✔ | `selection_lookup` |
+| 撤销自己的回档 | ✔ | `undo` |
+| 撤销他人回档 / 看全部记录 | ✔ | `undo_others` |
+| 查看回档记录 | ✔ | `history`（或 `undo` / `undo_others`） |
+| 日志文件浏览 | ✔ | `lookup_files` |
+| 数据库查询 | ✔ | `lookup_db` |
+| 运行状态 | ✔ | `status` |
+| 配置 / 权限管理 / 压缩 / 清库 / 数据库管理 / 重载 | ✔ | ✘ |
 
-三个普通玩家开关默认关闭，可在 `/mxback config` → 玩家权限中在线修改。
+全部权限默认关闭（普通玩家仅能打开主菜单与帮助）。
 
 ## 回档机制详解
 
@@ -227,19 +276,30 @@ archives/              # 自动压缩的历史日志（tar.gz 等）
 
 日志分类默认值：**开启** — 破坏、放置、爆炸、凝固、液体流动、容器交互、骨粉、聊天、命令、上下线、击杀、物品丢弃/拾取、插件启停；**关闭** — 树叶枯萎、作物生长、门/按钮交互、右键实体、吃/喝、游戏模式、传送、上床、活塞、烤制、天气、广播、跨维度、重生、表情。
 
-### player_access（普通玩家权限）
+### player_permissions（玩家权限全局默认）
+
+9 项普通玩家权限的统一默认值（详见「玩家权限管理」章节），全部默认关闭：
 
 | 键 | 默认 | 说明 |
 |---|---|---|
-| `allow_rollback` | `false` | 普通玩家选区与回档 |
-| `allow_undo` | `false` | 普通玩家撤销（仅自己的） |
-| `allow_lookup` | `false` | 普通玩家日志查询 |
+| `selection` | `false` | 选区模式与选点工具 |
+| `rollback` | `false` | 选区回档 |
+| `selection_lookup` | `false` | 选区日志查询 |
+| `undo` | `false` | 撤销自己的回档 |
+| `undo_others` | `false` | 撤销他人的回档（协管授权） |
+| `history` | `false` | 查看回档记录 |
+| `lookup_files` | `false` | 日志文件浏览 |
+| `lookup_db` | `false` | 数据库查询 |
+| `status` | `false` | 运行状态查看 |
+
+单玩家覆盖存于 `permissions.json`（`/mxback perm` 界面管理），以单独设置为准。
 
 ## 数据目录结构
 
 ```
 plugins/mxback/
-├── config.json     # 配置
+├── config.json     # 配置（含 player_permissions 全局默认权限）
+├── permissions.json # 单玩家权限覆盖（以单独设置为准）
 ├── mxback.db       # SQLite 数据库（WAL）
 ├── db_archive/     # 归档数据库（.db / 压缩 + .info 边车）
 ├── logs/           # 每日分类日志（按日期/玩家分层）

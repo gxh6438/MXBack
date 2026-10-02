@@ -92,10 +92,17 @@ DEFAULT_CONFIG: dict[str, Any] = {
         "auto_gzip_days": 7,
         "keep_archives_days": 0,
     },
-    "player_access": {
-        "allow_rollback": False,
-        "allow_undo": False,
-        "allow_lookup": False,
+    # 普通玩家（非 OP）权限全局默认；单玩家覆盖见 permissions.json
+    "player_permissions": {
+        "selection": False,
+        "rollback": False,
+        "selection_lookup": False,
+        "undo": False,
+        "undo_others": False,
+        "history": False,
+        "lookup_files": False,
+        "lookup_db": False,
+        "status": False,
     },
     # 容器交互日志识别用；容器内容因 API 限制无法记录与恢复
     "containers": [

@@ -17,6 +17,7 @@ from endstone.form import (
 
 from .database import ROLLBACK_ACTIONS
 from .i18n import Lang
+from .permissions import PERMISSION_ITEMS, PERM_KEYS
 from .rollback import parse_block_ids
 
 PAGE_SIZE = 10
@@ -231,7 +232,10 @@ class Forms:
     def _can(self, player: Player, key: str) -> bool:
         if bool(player.is_op):
             return True
-        return bool(self.plugin.cfg.get("player_access", key, default=False))
+        return self.plugin.permissions.has(player.name, key)
+
+    def _can_any(self, player: Player, *keys: str) -> bool:
+        return any(self._can(player, k) for k in keys)
 
     def _is_op(self, player: Player) -> bool:
         return bool(player.is_op)
@@ -256,9 +260,12 @@ class Forms:
     # 主菜单
     def show_main_menu(self, player: Player) -> None:
         plugin = self.plugin
-        can_rb = self._can(player, "allow_rollback")
-        can_undo = self._can(player, "allow_undo")
-        can_look = self._can(player, "allow_lookup")
+        can_sel = self._can(player, "selection")
+        can_rb = self._can(player, "rollback")
+        can_selq = self._can(player, "selection_lookup")
+        can_undo = self._can_any(player, "undo", "undo_others", "history")
+        can_look = self._can_any(player, "lookup_files", "lookup_db")
+        can_status = self._can(player, "status")
         is_op = self._is_op(player)
 
         selecting = plugin.is_selecting(player.name)
@@ -294,7 +301,7 @@ class Forms:
                 f"菜单已关闭，输入 /mxback 重新打开"
             ),
         )
-        if can_rb:
+        if can_sel:
             if selecting:
                 form.add_button(
                     _btn(ColorFormat.RED, "停止选区", "/mxback stop · 工具点击失效"),
@@ -307,6 +314,7 @@ class Forms:
                     ICONS["start"],
                     on_click=lambda p: self._cmd(p, "start"),
                 )
+        if can_rb or can_selq:
             form.add_button(
                 _btn(ColorFormat.AQUA, "选区操作", "/mxback menu · 回档/查看选区内日志"),
                 ICONS["rollback"],
@@ -325,16 +333,23 @@ class Forms:
                 ICONS["logs"],
                 on_click=lambda p: self.show_log_center(p),
             )
-        form.add_button(
-            _btn(ColorFormat.MINECOIN_GOLD, "运行状态", "/mxback status"),
-            ICONS["status"],
-            on_click=lambda p: self.plugin._cmd_status(p),
-        )
+        if can_status:
+            form.add_button(
+                _btn(ColorFormat.MINECOIN_GOLD, "运行状态", "/mxback status"),
+                ICONS["status"],
+                on_click=lambda p: self.plugin._cmd_status(p),
+            )
         if is_op:
             form.add_button(
                 _btn(ColorFormat.MATERIAL_REDSTONE, "配置文件", "所有配置项 · 热重载"),
                 ICONS["config"],
                 on_click=lambda p: self.show_config_menu(p),
+            )
+            form.add_button(
+                _btn(ColorFormat.MATERIAL_GOLD, "权限管理",
+                     "全局默认 · 单玩家权限设置"),
+                ICONS["access"],
+                on_click=lambda p: self.show_perm_menu(p),
             )
             form.add_button(
                 _btn(ColorFormat.MATERIAL_EMERALD, "日志归档", "立即压缩旧日志文件"),
@@ -573,8 +588,10 @@ class Forms:
 
     # 选区操作
     def show_selection_menu(self, player: Player) -> None:
-        if not self._can(player, "allow_rollback"):
-            player.send_error_message("你没有权限使用回档功能")
+        can_rb = self._can(player, "rollback")
+        can_selq = self._can(player, "selection_lookup")
+        if not can_rb and not can_selq:
+            player.send_error_message("你没有权限使用选区操作功能")
             return
         sel = self.plugin.selection.get(player.name)
         if sel is None or not sel.complete():
@@ -600,16 +617,18 @@ class Forms:
                 f"已取消（选区保留，可用 /mxback menu 重新打开）"
             ),
         )
-        form.add_button(
-            _btn(ColorFormat.AQUA, "选区回档", "恢复区域内的方块变更"),
-            ICONS["rollback"],
-            on_click=lambda p: self.show_rollback(p),
-        )
-        form.add_button(
-            _btn(ColorFormat.GOLD, "查看选区内日志", "按分类查看此区域内的变更记录"),
-            ICONS["logs"],
-            on_click=lambda p: self.show_selection_logs(p),
-        )
+        if can_rb:
+            form.add_button(
+                _btn(ColorFormat.AQUA, "选区回档", "恢复区域内的方块变更"),
+                ICONS["rollback"],
+                on_click=lambda p: self.show_rollback(p),
+            )
+        if can_selq:
+            form.add_button(
+                _btn(ColorFormat.GOLD, "查看选区内日志", "按分类查看此区域内的变更记录"),
+                ICONS["logs"],
+                on_click=lambda p: self.show_selection_logs(p),
+            )
         form.add_button(
             _btn(ColorFormat.BLUE, "返回主菜单", "回到 MxBack 主菜单"),
             ICONS["back"],
@@ -619,8 +638,8 @@ class Forms:
 
     # 选区内日志查询
     def show_selection_logs(self, player: Player) -> None:
-        if not self._can(player, "allow_rollback"):
-            player.send_error_message("你没有权限使用回档功能")
+        if not self._can(player, "selection_lookup"):
+            player.send_error_message("你没有权限查询选区内日志")
             return
         sel = self.plugin.selection.get(player.name)
         if sel is None or not sel.complete():
@@ -729,8 +748,8 @@ class Forms:
 
     # 回档表单
     def show_rollback(self, player: Player) -> None:
-        if not self._can(player, "allow_rollback"):
-            player.send_error_message("你没有权限使用回档功能")
+        if not self._can(player, "rollback"):
+            player.send_error_message("你没有权限执行回档")
             return
         sel = self.plugin.selection.get(player.name)
         if sel is None or not sel.complete():
@@ -874,11 +893,16 @@ class Forms:
 
     # 回档记录与撤销
     def show_history(self, player: Player, page: int = 1) -> None:
-        if not self._can(player, "allow_undo"):
-            player.send_error_message("你没有权限使用撤销功能")
+        if not self._can_any(player, "history", "undo", "undo_others"):
+            player.send_error_message("你没有权限查看回档记录")
             return
         plugin = self.plugin
-        owner = None if self._is_op(player) else player.name
+        # OP 与被授权撤销他人者可看全部记录；其余仅看自己的
+        owner = (
+            None
+            if self._can(player, "undo_others")
+            else player.name
+        )
         sessions = plugin.db.list_sessions(player=owner, limit=60)
         if not sessions:
             form = ActionForm(
@@ -945,7 +969,10 @@ class Forms:
         if s is None:
             player.send_error_message(f"找不到回档会话 #{session_id}")
             return
-        if not self._is_op(player) and s["player"] != player.name:
+        if (
+            s["player"] != player.name
+            and not self._can(player, "undo_others")
+        ):
             player.send_error_message("你只能查看自己的回档记录")
             return
         lang = plugin.lang
@@ -976,7 +1003,7 @@ class Forms:
             content=content,
             on_close=lambda p: None,
         )
-        if not s["undone"]:
+        if not s["undone"] and self._can_any(player, "undo", "undo_others"):
             form.add_button(
                 _btn(ColorFormat.RED, "撤销这次回档", "恢复该次回档前的方块"),
                 ICONS["undo"],
@@ -1004,7 +1031,8 @@ class Forms:
                 return
             stats = plugin.rollback.undo(
                 p.name, session_id=session_id, notify_name=p.name,
-                allow_any=self._is_op(p),
+                # OP/被授权撤销他人者可撤销任意会话
+                allow_any=self._can(p, "undo_others"),
             )
             if stats is None:
                 p.send_error_message(f"找不到回档会话 #{session_id}")
@@ -1046,7 +1074,9 @@ class Forms:
 
     # 日志中心
     def show_log_center(self, player: Player) -> None:
-        if not self._can(player, "allow_lookup"):
+        can_files = self._can(player, "lookup_files")
+        can_db = self._can(player, "lookup_db")
+        if not can_files and not can_db:
             player.send_error_message("你没有权限查看日志")
             return
         form = ActionForm(
@@ -1061,16 +1091,18 @@ class Forms:
             ]),
             on_close=lambda p: None,
         )
-        form.add_button(
-            _btn(ColorFormat.AQUA, "浏览日志文件", "选日期 · 全局/玩家 · 分类分页"),
-            ICONS["logs"],
-            on_click=lambda p: self._pick_log_date(p),
-        )
-        form.add_button(
-            _btn(ColorFormat.WHITE, "数据库查询", "分类/玩家/时间窗 · 方块与事件"),
-            ICONS["lookup"],
-            on_click=lambda p: self.show_lookup_menu(p),
-        )
+        if can_files:
+            form.add_button(
+                _btn(ColorFormat.AQUA, "浏览日志文件", "选日期 · 全局/玩家 · 分类分页"),
+                ICONS["logs"],
+                on_click=lambda p: self._pick_log_date(p),
+            )
+        if can_db:
+            form.add_button(
+                _btn(ColorFormat.WHITE, "数据库查询", "分类/玩家/时间窗 · 方块与事件"),
+                ICONS["lookup"],
+                on_click=lambda p: self.show_lookup_menu(p),
+            )
         form.add_button(
             "返回主菜单", ICONS["help"],
             on_click=lambda p: self.show_main_menu(p),
@@ -1078,8 +1110,8 @@ class Forms:
         player.send_form(form)
 
     def _pick_log_date(self, player: Player) -> None:
-        if not self._can(player, "allow_lookup"):
-            player.send_error_message("你没有权限查看日志")
+        if not self._can(player, "lookup_files"):
+            player.send_error_message("你没有权限浏览日志文件")
             return
         days = self.plugin.daily.list_days()
         today = time.strftime("%Y-%m-%d")
@@ -1160,8 +1192,8 @@ class Forms:
         return day
 
     def show_log_menu(self, player: Player, day: str) -> None:
-        if not self._can(player, "allow_lookup"):
-            player.send_error_message("你没有权限查看日志")
+        if not self._can(player, "lookup_files"):
+            player.send_error_message("你没有权限浏览日志文件")
             return
         players = self._log_player_names(day)
         content = "\n".join([
@@ -1203,8 +1235,8 @@ class Forms:
         player.send_form(form)
 
     def _show_player_search(self, player: Player, day: str) -> None:
-        if not self._can(player, "allow_lookup"):
-            player.send_error_message("你没有权限查看日志")
+        if not self._can(player, "lookup_files"):
+            player.send_error_message("你没有权限浏览日志文件")
             return
 
         def on_submit(p: Player, result: str):
@@ -1267,8 +1299,8 @@ class Forms:
     def show_player_categories(
         self, player: Player, day: str, actor: Optional[str]
     ) -> None:
-        if not self._can(player, "allow_lookup"):
-            player.send_error_message("你没有权限查看日志")
+        if not self._can(player, "lookup_files"):
+            player.send_error_message("你没有权限浏览日志文件")
             return
         who = actor if actor else "全局（自然 / 爆炸 / 管理审计）"
         form = ActionForm(
@@ -1356,8 +1388,8 @@ class Forms:
 
     # 数据库查询
     def show_lookup_menu(self, player: Player) -> None:
-        if not self._can(player, "allow_lookup"):
-            player.send_error_message("你没有权限查询日志")
+        if not self._can(player, "lookup_db"):
+            player.send_error_message("你没有权限查询数据库日志")
             return
         form = ActionForm(
             title="MxBack 数据库查询",
@@ -1381,6 +1413,9 @@ class Forms:
         player.send_form(form)
 
     def _show_query_filter(self, player: Player, kind: str) -> None:
+        if not self._can(player, "lookup_db"):
+            player.send_error_message("你没有权限查询数据库日志")
+            return
         labels = (
             BLOCK_QUERY_LABELS if kind == "block" else EVENT_QUERY_LABELS
         )
@@ -1536,9 +1571,10 @@ class Forms:
             on_click=lambda p: self.show_config_files(p),
         )
         form.add_button(
-            _btn(ColorFormat.MINECOIN_GOLD, "玩家权限", "普通玩家可用的功能"),
+            _btn(ColorFormat.MINECOIN_GOLD, "玩家权限",
+                 "全局默认 · 单玩家单独设置（以单独为准）"),
             ICONS["access"],
-            on_click=lambda p: self.show_config_access(p),
+            on_click=lambda p: self.show_perm_menu(p),
         )
         form.add_button(
             _btn(ColorFormat.BLUE, "语言设置", "方块/实体名称翻译语言"),
@@ -1880,40 +1916,224 @@ class Forms:
         )
         player.send_form(form)
 
-    def show_config_access(self, player: Player) -> None:
-        cfg = self.plugin.cfg
-        pa = cfg.get("player_access", default={})
+    # 权限管理（OP）：全局默认 + 单玩家设置
+    def show_perm_menu(self, player: Player) -> None:
+        if not self._is_op(player):
+            player.send_error_message("只有管理员可以管理玩家权限")
+            return
+        plugin = self.plugin
+        perms = plugin.permissions
+        online: list[str] = []
+        try:
+            for p in plugin.server.online_players:
+                if not bool(p.is_op):
+                    online.append(p.name)
+            online.sort()
+        except Exception:
+            online = []
+        overridden = perms.overridden_players()
+        # 列表：有单独设置的玩家 + 在线普通玩家
+        listed = list(overridden)
+        for name in online:
+            if name not in listed:
+                listed.append(name)
+        form = ActionForm(
+            title="MxBack 权限管理",
+            content="\n".join([
+                f"{ColorFormat.BOLD}{ColorFormat.GOLD}【 玩家权限管理 】"
+                f"{ColorFormat.RESET}",
+                f"{ColorFormat.GRAY}判定规则：玩家单独设置 > 全局默认；",
+                f"{ColorFormat.GRAY}未单独设置的项跟随全局默认，OP 恒为允许。",
+                f"{ColorFormat.GRAY}点击玩家进入单独设置；「全局默认」作用于",
+                f"{ColorFormat.GRAY}所有未单独设置的普通玩家。",
+            ]),
+            on_close=lambda p: None,
+        )
+        form.add_button(
+            _btn(ColorFormat.MATERIAL_GOLD, "全局默认权限",
+                 "所有普通玩家的默认权限（config.json）"),
+            ICONS["global"],
+            on_click=lambda p: self.show_perm_defaults(p),
+        )
+        for name in listed:
+            n_ov = len(perms.players.get(name, {}))
+            desc = f"单独设置 {n_ov} 项 · 点击修改" if n_ov else "跟随全局 · 点击单独设置"
+            form.add_button(
+                f"{name}\n{ColorFormat.GRAY}{desc}",
+                ICONS["player"],
+                on_click=lambda p, n=name: self.show_player_perms(p, n),
+            )
+            if n_ov:
+                form.add_button(
+                    f"{name}\n{ColorFormat.RED}清除全部单独设置（恢复跟随全局）",
+                    ICONS["refresh"],
+                    on_click=lambda p, n=name: self._confirm_clear_perms(p, n),
+                )
+        form.add_button(
+            _btn(ColorFormat.GRAY, "按名字添加玩家", "输入玩家名设置单独权限"),
+            ICONS["search"],
+            on_click=lambda p: self._prompt_perm_player(p),
+        )
+        form.add_button(
+            "返回主菜单", ICONS["back"],
+            on_click=lambda p: self.show_main_menu(p),
+        )
+        player.send_form(form)
 
+    def _prompt_perm_player(self, player: Player) -> None:
         def on_submit(p: Player, result: str):
-            values = _form_values(result, 3)
+            values = _form_values(result, 1)
             if values is None:
                 p.send_error_message("表单数据解析失败")
                 return
-            data = cfg.data.setdefault("player_access", {})
-            data["allow_rollback"] = bool(values[0])
-            data["allow_undo"] = bool(values[1])
-            data["allow_lookup"] = bool(values[2])
-            self._save_cfg(p, "玩家权限设置")
+            name = str(values[0]).strip()
+            if not name:
+                self.show_perm_menu(p)
+                return
+            self.show_player_perms(p, name)
 
         form = ModalForm(
-            title="玩家权限（普通玩家/非 OP）",
+            title="按名字添加玩家",
+            controls=[
+                TextInput(
+                    "玩家名（不区分大小写，离线玩家亦可）",
+                    placeholder="如 Steve",
+                ),
+            ],
+            submit_button="进入权限设置",
+            on_submit=on_submit,
+            on_close=lambda p: self.show_perm_menu(p),
+        )
+        player.send_form(form)
+
+    def show_perm_defaults(self, player: Player) -> None:
+        """全局默认权限：写 config.json player_permissions。"""
+        if not self._is_op(player):
+            player.send_error_message("只有管理员可以管理玩家权限")
+            return
+        cfg = self.plugin.cfg
+        data = cfg.data.setdefault("player_permissions", {})
+
+        def on_submit(p: Player, result: str):
+            values = _form_values(result, len(PERM_KEYS))
+            if values is None:
+                p.send_error_message("表单数据解析失败")
+                return
+            for i, key in enumerate(PERM_KEYS):
+                data[key] = bool(values[i])
+            self._save_cfg(p, "全局默认权限")
+
+        form = ModalForm(
+            title="全局默认权限（普通玩家）",
             controls=[
                 Toggle(
-                    "允许普通玩家选区与回档",
-                    bool(pa.get("allow_rollback", False)),
-                ),
-                Toggle(
-                    "允许普通玩家撤销回档（/mxback undo、回档记录）",
-                    bool(pa.get("allow_undo", False)),
-                ),
-                Toggle(
-                    "允许普通玩家查看日志中心（日志文件 + 数据库查询）",
-                    bool(pa.get("allow_lookup", False)),
-                ),
+                    f"{name} — {desc}"
+                    if desc else name,
+                    bool(data.get(key, False)),
+                )
+                for key, name, desc in PERMISSION_ITEMS
             ],
             submit_button="保存并生效",
             on_submit=on_submit,
-            on_close=lambda p: None,
+            on_close=lambda p: self.show_perm_menu(p),
+        )
+        player.send_form(form)
+
+    def show_player_perms(self, player: Player, target: str) -> None:
+        """单玩家权限：仅记录与生效值不同的项为单独设置。"""
+        if not self._is_op(player):
+            player.send_error_message("只有管理员可以管理玩家权限")
+            return
+        plugin = self.plugin
+        perms = plugin.permissions
+        effective = perms.effective(target)
+        overrides = perms.players.get(target, {})
+        # ModalForm 无 content 参数：当前状态先发聊天消息
+        name_of = {k: n for k, n, _ in PERMISSION_ITEMS}
+        on_off = {
+            True: f"{ColorFormat.GREEN}允许", False: f"{ColorFormat.RED}拒绝",
+        }
+        lines = [f"{ColorFormat.GOLD}【 {target} 当前权限 】"]
+        lines.append(
+            f"{ColorFormat.GRAY}提交时：仅与当前生效值不同的项会记为单独设置；"
+            f"未单独设置的项跟随全局默认"
+        )
+        for k in PERM_KEYS:
+            tag = "（单独设置）" if k in overrides else ""
+            lines.append(
+                f"{ColorFormat.WHITE}· {name_of[k]}："
+                f"{on_off[effective[k]]}{ColorFormat.GRAY}{tag}"
+            )
+        player.send_message("\n".join(lines))
+
+        def on_submit(p: Player, result: str):
+            values = _form_values(result, len(PERM_KEYS))
+            if values is None:
+                p.send_error_message("表单数据解析失败")
+                return
+            changed = 0
+            for i, key in enumerate(PERM_KEYS):
+                new = bool(values[i])
+                if new != effective[key]:
+                    # 与提交前生效值不同 → 记为单独设置（以单独为准）
+                    perms.set_override(target, key, new)
+                    changed += 1
+            p.play_sound(p.location, "random.orb")
+            if changed:
+                p.send_message(
+                    f"{ColorFormat.GOLD}[MxBack]{ColorFormat.GREEN} "
+                    f"{target} 的单独权限已保存（{changed} 项），立即生效"
+                )
+            else:
+                p.send_message(
+                    f"{ColorFormat.GOLD}[MxBack]{ColorFormat.WHITE} "
+                    f"{target} 的权限无变化（与提交前生效值相同），"
+                    f"未产生新的单独设置"
+                )
+            self.show_player_perms(p, target)
+
+        form = ModalForm(
+            title=f"单独权限 · {target}",
+            controls=[
+                Toggle(f"{name} — {desc}", effective[key])
+                for key, name, desc in PERMISSION_ITEMS
+            ],
+            submit_button="保存单独设置",
+            on_submit=on_submit,
+            on_close=lambda p: self.show_perm_menu(p),
+        )
+        player.send_form(form)
+
+    def _confirm_clear_perms(self, player: Player, target: str) -> None:
+        plugin = self.plugin
+
+        def on_submit(p: Player, result: str):
+            values = _form_values(result, 1)
+            if values is None or not values[0]:
+                p.send_message(
+                    f"{ColorFormat.GOLD}[MxBack]{ColorFormat.GRAY} 已取消清除"
+                )
+                return
+            if plugin.permissions.clear_player(target):
+                p.play_sound(p.location, "random.orb")
+                p.send_message(
+                    f"{ColorFormat.GOLD}[MxBack]{ColorFormat.GREEN} "
+                    f"已清除 {target} 的全部单独设置，恢复跟随全局默认"
+                )
+            self.show_perm_menu(p)
+
+        n = len(plugin.permissions.players.get(target, {}))
+        form = ModalForm(
+            title=f"清除 {target} 的单独设置？",
+            controls=[
+                Toggle(
+                    f"确认清除（共 {n} 项单独设置，之后跟随全局默认）",
+                    False,
+                ),
+            ],
+            submit_button="确认清除",
+            on_submit=on_submit,
+            on_close=lambda p: self.show_perm_menu(p),
         )
         player.send_form(form)
 

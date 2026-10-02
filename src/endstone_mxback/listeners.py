@@ -893,6 +893,15 @@ class Listeners:
         is_wand1 = item_id == wand1
         is_wand2 = item_id == wand2 and not is_wand1  # 同 ID 时以 wand1 为准
 
+        # 选区权限校验：授权被中途撤销时工具立即失效，
+        # 并顺手清理残留的选区模式状态
+        if selecting and not (
+            bool(player.is_op)
+            or self.plugin.permissions.has(player.name, "selection")
+        ):
+            selecting = False
+            self.plugin.selection_off(player.name)
+
         # 1a) 左键木斧：退出选区模式
         if is_left and is_wand1 and selecting:
             event.cancel()

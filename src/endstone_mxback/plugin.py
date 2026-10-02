@@ -22,6 +22,7 @@ from .database import Database, compress_archive
 from .forms import Forms
 from .i18n import Lang
 from .listeners import Listeners
+from .permissions import PermissionManager
 from .rollback import RollbackEngine
 from .selection import SelectionManager
 
@@ -35,6 +36,7 @@ HELP_TEXT = """§e【 MxBack 方块日志与回档 】
 §f/mxback log §7- 日志中心（日志文件浏览 + 数据库查询）
 §f/mxback lookup §7- 日志中心（同上，兼容旧命令）
 §f/mxback config §7- 配置文件（所有配置项，热重载）
+§f/mxback perm §7- 权限管理（全局默认 + 单玩家设置，OP）
 §f/mxback status §7- 运行状态
 §f/mxback compress [gzip|bz2|xz|auto] §7- 立即压缩旧日志
 §f/mxback purge <天数> §7- 清理数据库中 N 天前的记录
@@ -46,7 +48,7 @@ HELP_TEXT = """§e【 MxBack 方块日志与回档 】
 
 # 子命令枚举（写入命令 usages，供客户端自动补全）
 SUB_COMMANDS = (
-    "start|stop|main|menu|help|undo|history|log|lookup|"
+    "start|stop|main|menu|help|undo|history|log|lookup|perm|"
     "config|settings|status|compress|purge|db|reload"
 )
 
@@ -118,6 +120,7 @@ class MxBackPlugin(Plugin):
         self._check_runtime()
         self.cfg = ConfigManager(self.data_folder)
         self.lang = Lang(self)
+        self.permissions = PermissionManager(self.data_folder, self.cfg)
         self.db = Database(self.data_folder)
         # 上次关服若中断了"恢复归档"，清掉残留的解压临时文件
         #（切换本身是原子改名，残留文件不代表数据损坏）
@@ -782,10 +785,14 @@ class MxBackPlugin(Plugin):
         return bool(sender.is_op)
 
     def _can(self, sender: CommandSender, key: str) -> bool:
-        """普通玩家是否被配置允许；OP/控制台恒真。"""
+        """玩家生效权限：OP/控制台恒真，其余按 单独设置 > 全局默认。"""
         if self._is_op_or_console(sender):
             return True
-        return bool(self.cfg.get("player_access", key, default=False))
+        return self.permissions.has(sender.name, key)
+
+    def _can_any(self, sender: CommandSender, *keys: str) -> bool:
+        """任一权限命中即通过（用于组合入口，如日志中心）。"""
+        return any(self._can(sender, k) for k in keys)
 
     # 命令分发
     def on_command(
@@ -813,8 +820,8 @@ class MxBackPlugin(Plugin):
             if player is None:
                 sender.send_message("该命令只能由玩家执行")
                 return True
-            if not self._can(sender, "allow_rollback"):
-                sender.send_error_message("你没有权限使用选区与回档功能")
+            if not self._can(sender, "selection"):
+                sender.send_error_message("你没有权限使用选区功能")
                 return True
             self.selection_on(player.name)
             wand1 = self.cfg.get("wand_item", default="minecraft:wooden_axe")
@@ -841,8 +848,8 @@ class MxBackPlugin(Plugin):
             if player is None:
                 sender.send_message("该命令只能由玩家执行")
                 return True
-            if not self._can(sender, "allow_rollback"):
-                sender.send_error_message("你没有权限使用选区与回档功能")
+            if not self._can(sender, "selection"):
+                sender.send_error_message("你没有权限使用选区功能")
                 return True
             was = self.is_selecting(player.name)
             self.selection_off(player.name)
@@ -860,7 +867,7 @@ class MxBackPlugin(Plugin):
             return True
 
         if sub == "undo":
-            if not self._can(sender, "allow_undo"):
+            if not self._can(sender, "undo") and not self._can(sender, "undo_others"):
                 sender.send_error_message("你没有权限使用撤销功能")
                 return True
             session_id: Optional[int] = None
@@ -874,8 +881,8 @@ class MxBackPlugin(Plugin):
                 sender.name,
                 any_player=(player is None),
                 session_id=session_id,
-                # OP/控制台可撤销任意会话；普通玩家仅限自己的
-                allow_any=self._is_op_or_console(sender),
+                # OP/控制台/被授权者可撤销任意会话；其余仅限自己的
+                allow_any=self._can(sender, "undo_others"),
             )
             if stats is None:
                 sender.send_message(
@@ -890,8 +897,10 @@ class MxBackPlugin(Plugin):
             if player is None:
                 sender.send_message("该命令只能由玩家执行（游戏内通过表单查看与撤销）")
                 return True
-            if not self._can(sender, "allow_undo"):
-                sender.send_error_message("你没有权限使用撤销功能")
+            if not self._can_any(
+                sender, "history", "undo", "undo_others"
+            ):
+                sender.send_error_message("你没有权限查看回档记录")
                 return True
             self.forms.show_history(player)
             return True
@@ -900,8 +909,8 @@ class MxBackPlugin(Plugin):
             if player is None:
                 sender.send_message("该命令只能由玩家执行")
                 return True
-            if not self._can(sender, "allow_rollback"):
-                sender.send_error_message("你没有权限使用回档功能")
+            if not self._can_any(sender, "rollback", "selection_lookup"):
+                sender.send_error_message("你没有权限使用选区操作功能")
                 return True
             self.forms.show_selection_menu(player)
             return True
@@ -910,10 +919,24 @@ class MxBackPlugin(Plugin):
             if player is None:
                 sender.send_message("该命令只能由玩家执行（游戏内通过表单查看）")
                 return True
-            if not self._can(sender, "allow_lookup"):
+            if not self._can_any(sender, "lookup_files", "lookup_db"):
                 sender.send_error_message("你没有权限查看日志")
                 return True
             self.forms.show_log_center(player)
+            return True
+
+        if sub == "perm":
+            if not self._is_op_or_console(sender):
+                sender.send_error_message("只有管理员可以管理玩家权限")
+                return True
+            if player is None:
+                sender.send_message(
+                    "请在游戏内输入 /mxback perm 打开权限管理界面；"
+                    "或直接编辑 config.json（player_permissions）"
+                    "与 permissions.json（单玩家设置）"
+                )
+                return True
+            self.forms.show_perm_menu(player)
             return True
 
         if sub in ("settings", "config"):
@@ -930,6 +953,9 @@ class MxBackPlugin(Plugin):
             return True
 
         if sub == "status":
+            if not self._can(sender, "status"):
+                sender.send_error_message("你没有权限查看运行状态")
+                return True
             self._cmd_status(sender)
             return True
 
@@ -1011,6 +1037,8 @@ class MxBackPlugin(Plugin):
                 return True
             try:
                 self.cfg.load()
+                # permissions.json 可能被直接编辑：一并重载
+                self.permissions = PermissionManager(self.data_folder, self.cfg)
                 self.container_ids = frozenset(
                     self.cfg.get("containers", default=[])
                 )
