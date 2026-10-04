@@ -77,6 +77,21 @@ class Lang:
             f"{'官方' if self.i18n_available else '本地映射兜底的'}名称"
         )
 
+    def translatable_text(self, value) -> str:
+        """Endstone 的事件属性可能是 str 或 Translatable（如死亡消息、
+        广播消息）。Translatable 是 pybind 对象，无法写入 SQLite（会让
+        整批日志落盘失败丢失），必须先转换为本地化纯文本。"""
+        if value is None:
+            return ""
+        if isinstance(value, str):
+            return value
+        try:
+            return self.plugin.server.language.translate(value, self.locale)
+        except Exception:
+            # 翻译服务不可用时退回原始 key/文本，保证返回值始终是 str
+            text = getattr(value, "text", None)
+            return text if isinstance(text, str) and text else str(value)
+
     def block_name(self, block_id: str) -> str:
         if not block_id:
             return "未知"

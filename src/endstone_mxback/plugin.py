@@ -331,6 +331,10 @@ class MxBackPlugin(Plugin):
         每日日志行中省略坐标后缀。daily=False 不写每日日志文件（内部
         结构化数据用，如掉落物指纹快照）。
         """
+        if not isinstance(detail, str):
+            # 保险丝：任何非 str 对象（如 Translatable）都会让整批
+            # executemany 落盘失败丢失日志，这里统一转成纯文本
+            detail = self.lang.translatable_text(detail)
         self._event_queue.append({
             "ts": time.time(),
             "actor": actor,

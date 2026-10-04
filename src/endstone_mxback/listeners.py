@@ -491,7 +491,7 @@ class Listeners:
             return
         self.plugin.record_event(
             action="broadcast", actor="服务器",
-            detail=str(event.message),
+            detail=self.plugin.lang.translatable_text(event.message),
         )
 
     @event_handler
@@ -652,7 +652,8 @@ class Listeners:
         )
         self.plugin.record_event(
             action="kill", actor=actor,
-            detail=event.death_message or f"{victim.name} 死亡",
+            detail=self.plugin.lang.translatable_text(event.death_message)
+            or f"{victim.name} 死亡",
             x=loc.block_x, y=loc.block_y, z=loc.block_z,
             dimension=victim.dimension.name,
         )
