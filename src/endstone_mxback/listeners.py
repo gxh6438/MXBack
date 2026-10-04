@@ -224,6 +224,10 @@ class Listeners:
         self.plugin = plugin
         # 交互去重：玩家 -> (坐标, 动作, 时间戳)
         self._last_interact: dict[str, tuple] = {}
+        # 选点防抖：玩家 -> 最近一次选点时间戳(time.monotonic)。
+        # PC 端一次右键会连续触发两次交互事件(主/副手各一次)，
+        # 不防抖的话一点击就顺序选掉首点和次点
+        self._last_wand_click: dict[str, float] = {}
         # 玩家最近一次安全读取的位置快照：join/quit/kick/respawn 等
         # 过渡窗口事件里绝不读 player.location/dimension——入服/离服/
         # 重生瞬间可能踩到未就绪或悬空的 WeakRef<Dimension>，SIGSEGV
@@ -608,6 +612,7 @@ class Listeners:
         self.plugin.selection.clear(name)
         self.plugin.selection_off(name)
         self._last_interact.pop(name, None)
+        self._last_wand_click.pop(name, None)
         if not self._enabled("quit"):
             return
         # 离服过渡窗口：用最近快照记日志，不读正在拆卸的 Actor
@@ -929,6 +934,17 @@ class Listeners:
                     event.cancel()
                     self.plugin.forms.show_main_menu(player)
                 return
+
+            # 防抖：PC 端一次右键会连续触发两次交互事件(主/副手)，
+            # 窗口内的重复触发直接吞掉，避免一次点击选掉两个点。
+            # 重复事件同样取消，防止顺手打开容器/放置方块
+            debounce = float(cfg.get("selection", "click_debounce_ms", default=250)) / 1000.0
+            if debounce > 0:
+                now = time.monotonic()
+                if now - self._last_wand_click.get(player.name, 0.0) < debounce:
+                    event.cancel()
+                    return
+                self._last_wand_click[player.name] = now
 
             old_sel = self.plugin.selection.get(player.name)
             same_dim = (

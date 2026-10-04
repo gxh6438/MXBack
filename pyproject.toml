@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "endstone-mxback"
-version = "0.0.3"
+version = "0.0.4"
 description = "MxBack - Endstone 方块日志记录与区域回档插件"
 requires-python = ">=3.10"
 license = "MIT"

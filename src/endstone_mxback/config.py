@@ -16,6 +16,10 @@ DEFAULT_CONFIG: dict[str, Any] = {
         "max_volume": 32768,
         "min_y": -64,
         "max_y": 319,
+        # 选点防抖窗口(毫秒)：PC 端一次右键会连续触发两次交互
+        # 事件(主/副手各一次)，窗口内的重复触发直接忽略，避免
+        # 一次点击就选掉两个点。设 0 可关闭防抖。
+        "click_debounce_ms": 250,
     },
     "rollback": {
         "max_records": 5000,
