@@ -80,17 +80,50 @@ class Lang:
     def translatable_text(self, value) -> str:
         """Endstone 的事件属性可能是 str 或 Translatable（如死亡消息、
         广播消息）。Translatable 是 pybind 对象，无法写入 SQLite（会让
-        整批日志落盘失败丢失），必须先转换为本地化纯文本。"""
+        整批日志落盘失败丢失），必须先转换为本地化纯文本；任何情况下
+        都不允许 ``<...object at 0x...>`` 落盘。"""
         if value is None:
             return ""
         if isinstance(value, str):
             return value
+
+        # Translatable：text = 翻译键（如 death.attack.mob），params = 参数
+        text = ""
+        params: list[str] = []
         try:
-            return self.plugin.server.language.translate(value, self.locale)
+            text = getattr(value, "text", "") or ""
+            if not isinstance(text, str):
+                text = str(text)
         except Exception:
-            # 翻译服务不可用时退回原始 key/文本，保证返回值始终是 str
-            text = getattr(value, "text", None)
-            return text if isinstance(text, str) and text else str(value)
+            text = ""
+        try:
+            raw_params = getattr(value, "params", None) or []
+            if isinstance(raw_params, (list, tuple)):
+                # 参数可能嵌套 Translatable（极罕见），递归转纯文本
+                params = [self.translatable_text(p) for p in raw_params]
+        except Exception:
+            params = []
+
+        # 1) 服务器端翻译最准确（如「Steve 被 Zombie 杀死了」）；
+        #    旧版 Endstone 无 Translatable 重载 / 语言模块异常时抛错走 2)
+        try:
+            translated = self.plugin.server.language.translate(
+                value, self.locale
+            )
+            if isinstance(translated, str) and translated:
+                return translated
+        except Exception:
+            pass
+
+        # 2) 翻译失败：翻译键 + 参数还原可读内容；全部为空时占位符兜底，
+        #    绝不输出 <endstone._python.lang.Translatable object at 0x...>
+        if text and params:
+            return f"{text} ({', '.join(params)})"
+        if text:
+            return text
+        if params:
+            return ", ".join(params)
+        return "(无法翻译的消息)"
 
     def block_name(self, block_id: str) -> str:
         if not block_id:
